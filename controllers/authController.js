@@ -1,6 +1,7 @@
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const { User } = require("../models");
+const { tokenBlacklist } = require('../middlewares/authMiddleware'); // Import the blacklist
 
 // In-memory store for verification codes (in a real application, use a database)
 
@@ -100,15 +101,26 @@ exports.verifyCode = async (req, res) => {
     delete verificationCodes[userId]; // Clear the code after successful verification
 
     // Generate a new token after successful verification
-    const newToken = jwt.sign(
-      { userId },
-      process.env.JWT_SECRET,
-      { expiresIn: "1h" }
-    );
+    const newToken = jwt.sign({ userId }, process.env.JWT_SECRET, {
+      expiresIn: "1h",
+    });
 
-    return res.status(200).json({ message: "Verification successful", newToken });
+    return res
+      .status(200)
+      .json({ message: "Verification successful", newToken });
   }
 
   return res.status(400).json({ message: "Invalid verification code" });
 };
 
+exports.logout = async (req, res) => {
+  try {
+    // Add the token to the blacklist
+    const token = req.headers.authorization.split(" ")[1];
+    tokenBlacklist.push(token);
+
+    res.status(200).json({ message: "Logout successful" });
+  } catch (error) {
+    res.status(500).json({ message: "Logout failed", error });
+  }
+};

@@ -15,6 +15,7 @@ router.post(
   adminController.adminRegister
 );
 router.post("/set-password", adminController.setPassword);
+router.post("/logout", authenticate, authController.logout); // Add this line
 
 // Example of protected route
 router.get("/admin", authenticate, authorize(["admin"]), (req, res) => {
