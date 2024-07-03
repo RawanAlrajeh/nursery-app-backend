@@ -1,9 +1,7 @@
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const { User } = require("../models");
-const { tokenBlacklist } = require('../middlewares/authMiddleware'); // Import the blacklist
-
-// In-memory store for verification codes (in a real application, use a database)
+const { tokenBlacklist } = require("../middlewares/authMiddleware");
 
 const verificationCodes = {};
 
@@ -54,9 +52,7 @@ exports.login = async (req, res) => {
 
   try {
     if (!email || !password) {
-      return res
-        .status(400)
-        .json({ message: "Email and password are required" });
+      return res.status(400).json({ message: "Email and password are required" });
     }
 
     const user = await User.findOne({ where: { email } });
@@ -73,41 +69,38 @@ exports.login = async (req, res) => {
       return res.status(500).json({ message: "Internal server error" });
     }
 
-    // Generate OTP token for verification
     const otpToken = jwt.sign(
       { userId: user.id, role: user.role },
       process.env.JWT_SECRET,
       { expiresIn: "15m" }
     );
 
-    // Generate and store the verification code
     const verificationCode = generateVerificationCode();
     verificationCodes[user.id] = verificationCode;
 
-    res.status(200).json({ otpToken, verificationCode });
+    console.log("Login successful, role:", user.role); // Debugging line
+    res.status(200).json({ otpToken, verificationCode, role: user.role, name: user.name });
   } catch (error) {
     res.status(500).json({ message: "Login failed", error: error.message });
   }
 };
 
-// Verify OTP code and return a new token upon success
 exports.verifyCode = async (req, res) => {
   const { code } = req.body;
-  const userId = req.user.userId; // Ensure this is correctly set from the token
+  const userId = req.user.userId;
 
   const storedCode = verificationCodes[userId];
 
   if (storedCode && storedCode === code) {
-    delete verificationCodes[userId]; // Clear the code after successful verification
+    delete verificationCodes[userId];
 
-    // Generate a new token after successful verification
-    const newToken = jwt.sign({ userId }, process.env.JWT_SECRET, {
-      expiresIn: "1h",
-    });
+    const newToken = jwt.sign(
+      { userId: req.user.userId, role: req.user.role },
+      process.env.JWT_SECRET,
+      { expiresIn: "1h" }
+    );
 
-    return res
-      .status(200)
-      .json({ message: "Verification successful", newToken });
+    return res.status(200).json({ message: "Verification successful", newToken });
   }
 
   return res.status(400).json({ message: "Invalid verification code" });
@@ -115,12 +108,95 @@ exports.verifyCode = async (req, res) => {
 
 exports.logout = async (req, res) => {
   try {
-    // Add the token to the blacklist
     const token = req.headers.authorization.split(" ")[1];
+    if (!token) {
+      return res.status(400).json({ message: "No token provided" });
+    }
+
     tokenBlacklist.push(token);
 
     res.status(200).json({ message: "Logout successful" });
   } catch (error) {
     res.status(500).json({ message: "Logout failed", error });
+  }
+};
+
+exports.setPassword = async (req, res) => {
+  const { token, password } = req.body;
+
+  try {
+    if (!process.env.JWT_SECRET) {
+      throw new Error("JWT_SECRET is not defined");
+    }
+
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    console.log("Decoded token:", decoded); // Debugging line
+
+    const user = await User.findByPk(decoded.userId);
+    if (!user) {
+      return res.status(400).json({ message: "Invalid token or user not found" });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    user.password = hashedPassword;
+    await user.save();
+
+    res.status(200).json({ message: "Password set successfully" });
+  } catch (error) {
+    console.error("Error setting password:", error); // Log the error
+    res.status(500).json({ message: "Failed to set password", error: error.message });
+  }
+};
+
+
+
+exports.adminRegister = async (req, res) => {
+  const { name, email, role } = req.body;
+
+  if (!["mother", "nursery"].includes(role)) {
+    return res.status(400).json({ message: "Invalid role specified." });
+  }
+
+  const transaction = await sequelize.transaction();
+
+  try {
+    const existingUser = await User.findOne({ where: { email } });
+    if (existingUser) {
+      return res.status(400).json({ message: "Email already in use" });
+    }
+
+    const user = await User.create({
+      name,
+      email,
+      role,
+    }, { transaction });
+
+    const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: '1h' });
+
+    await sendInvitationEmail(user.email, token);
+    await transaction.commit();
+
+    res.status(201).json({ message: "User registered successfully. Invitation email sent." });
+  } catch (error) {
+    await transaction.rollback();
+
+    if (error.name === "SequelizeUniqueConstraintError") {
+      const uniqueError = error.errors.find((err) => err.type === "unique violation");
+      res.status(400).json({
+        message: "User registration failed",
+        error: {
+          code: error.parent.code,
+          message: uniqueError ? uniqueError.message : "Unique constraint violation",
+        },
+      });
+    } else {
+      res.status(500).json({
+        message: "User registration failed",
+        error: {
+          code: error.parent?.code || "INTERNAL_SERVER_ERROR",
+          message: error.message,
+        },
+      });
+    }
   }
 };

@@ -1,19 +1,28 @@
-require('dotenv').config();
-
 const express = require('express');
 const cors = require('cors');
+const routes = require('./routes');
+const errorMiddleware = require('./middlewares/errorMiddleware');
+const { sequelize } = require('./models');
+
 const app = express();
-const authRoutes = require('./routes/auth');
 
 const corsOptions = {
-  origin: 'http://localhost:3001',
-  optionsSuccessStatus: 200 // For legacy browser support
+  origin: 'http://localhost:3001', // Your frontend application
+  optionsSuccessStatus: 200, // Some legacy browsers (IE11, various SmartTVs) choke on 204
+  credentials: true,
 };
 
-app.use(cors(corsOptions)); // Use CORS middleware globally
-app.use(express.json()); // Parse JSON request bodies
-app.use('/api/auth', authRoutes);
+app.use(cors(corsOptions)); // Apply CORS middleware globally
+app.use(express.json());
+app.use('/api', routes);
+app.use(errorMiddleware);
 
-const PORT = process.env.PORT || 4000;
+sequelize.sync()
+  .then(() => {
+    console.log('Database connected');
+  })
+  .catch(err => {
+    console.error('Unable to connect to the database:', err);
+  });
 
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+module.exports = app;
